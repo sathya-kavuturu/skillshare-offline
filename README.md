@@ -7,12 +7,12 @@ A modern, robust downloader for Skillshare courses that supports the new Cloudfl
 
 ## Features
 
-- ✅ **Cloudflare Streams Support**: Handles the new video delivery system that broke legacy downloaders.
-- ✅ **Parallel Downloads**: Fast, concurrent downloads (4 videos at once).
-- ✅ **Project Resources**: Downloads included class resources (zip, pdf, etc.) and instructions.
-- ✅ **Anti-Detection**: Built-in browser fingerprinting to bypass bot detection.
-- ✅ **Clean Organization**: Videos named and numbered correctly (e.g., `01. Introduction.mp4`).
-- ✅ **Resumable**: Skips files that are already downloaded.
+- **Cloudflare Streams Support**: Handles the new video delivery system that broke legacy downloaders.
+- **Parallel Downloads**: Fast, concurrent downloads (4 videos at once).
+- **Project Resources**: Downloads included class resources (zip, pdf, etc.) and instructions.
+- **Anti-Detection**: Built-in browser fingerprinting to bypass bot detection.
+- **Clean Organization**: Videos named and numbered correctly (e.g., `01. Introduction.mp4`).
+- **Resumable**: Skips files that are already downloaded.
 
 ## Installation
 
@@ -32,7 +32,7 @@ Check the [Releases](https://github.com/xenking/skillshare-offline/releases) pag
 
 **Requirements**:
 
-- [Go](https://go.dev/dl/) 1.21+
+- [Go](https://go.dev/dl/) 1.25+
 - [ffmpeg](https://ffmpeg.org/download.html) (must be in your PATH)
 
 ```bash
