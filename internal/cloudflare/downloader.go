@@ -48,7 +48,7 @@ type Resolution struct {
 }
 
 // DownloadVideo downloads a video from a Cloudflare Stream manifest URL
-func (d *Downloader) DownloadVideo(manifestURL, outputPath string, preferredQuality string) error {
+func (d *Downloader) DownloadVideo(ctx context.Context, manifestURL, outputPath string, preferredQuality string) error {
 	// Extract base URL and video UID
 	baseURL, videoUID, err := extractBaseURLAndUID(manifestURL)
 	if err != nil {
@@ -56,42 +56,26 @@ func (d *Downloader) DownloadVideo(manifestURL, outputPath string, preferredQual
 	}
 
 	// Fetch master playlist
-	masterPlaylist, err := d.fetchMasterPlaylist(manifestURL)
+	masterPlaylist, err := d.fetchMasterPlaylist(ctx, manifestURL)
 	if err != nil {
 		return fmt.Errorf("failed to fetch master playlist: %w", err)
 	}
-
-	// Select quality
-	/*
-		fmt.Printf("    Available resolutions: ")
-		for i, v := range masterPlaylist.Variants {
-			if v != nil {
-				if i > 0 {
-					fmt.Printf(", ")
-				}
-				fmt.Printf("%s (%d kbps)", v.Resolution, v.Bandwidth/1000)
-			}
-		}
-		fmt.Println()
-	*/
 
 	variant := selectBestVariant(masterPlaylist.Variants, preferredQuality)
 	if variant == nil {
 		return fmt.Errorf("no suitable video quality found")
 	}
-	// fmt.Printf("    Selected: %s (%d kbps)\n", variant.Resolution, variant.Bandwidth/1000)
 
 	// Build the manifest URL for the selected quality
 	qualityManifestURL := buildManifestURL(baseURL, videoUID, variant.URI)
 
-	// Create temp directory for segments - make unique to avoid race conditions in parallel mode
+	// Create temp directory for segments
 	outputDir := filepath.Dir(outputPath)
 	baseName := filepath.Base(outputPath)
 	segmentDir := filepath.Join(outputDir, fmt.Sprintf(".segments_%s", baseName))
 	if err := os.MkdirAll(segmentDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
-	// Ensure cleanup happens even on errors
 	defer os.RemoveAll(segmentDir)
 
 	// Download audio if available
@@ -99,7 +83,7 @@ func (d *Downloader) DownloadVideo(manifestURL, outputPath string, preferredQual
 	for _, alt := range variant.Alternatives {
 		if alt.Type == "AUDIO" && alt.URI != "" {
 			audioManifestURL := buildManifestURL(baseURL, videoUID, alt.URI)
-			audioSegments, err := d.downloadSegments(audioManifestURL, baseURL, segmentDir, true)
+			audioSegments, err := d.downloadSegments(ctx, audioManifestURL, baseURL, segmentDir, true)
 			if err != nil {
 				fmt.Printf("Warning: failed to download audio: %v\n", err)
 				continue
@@ -114,7 +98,7 @@ func (d *Downloader) DownloadVideo(manifestURL, outputPath string, preferredQual
 	}
 
 	// Download video segments
-	videoSegments, err := d.downloadSegments(qualityManifestURL, baseURL, segmentDir, false)
+	videoSegments, err := d.downloadSegments(ctx, qualityManifestURL, baseURL, segmentDir, false)
 	if err != nil {
 		return fmt.Errorf("failed to download video segments: %w", err)
 	}
@@ -144,8 +128,8 @@ func (d *Downloader) DownloadVideo(manifestURL, outputPath string, preferredQual
 }
 
 // GetAvailableResolutions returns all available video resolutions
-func (d *Downloader) GetAvailableResolutions(manifestURL string) ([]Resolution, error) {
-	masterPlaylist, err := d.fetchMasterPlaylist(manifestURL)
+func (d *Downloader) GetAvailableResolutions(ctx context.Context, manifestURL string) ([]Resolution, error) {
+	masterPlaylist, err := d.fetchMasterPlaylist(ctx, manifestURL)
 	if err != nil {
 		return nil, err
 	}
@@ -166,8 +150,8 @@ func (d *Downloader) GetAvailableResolutions(manifestURL string) ([]Resolution, 
 	return resolutions, nil
 }
 
-func (d *Downloader) fetchMasterPlaylist(urlStr string) (*m3u8.MasterPlaylist, error) {
-	resp, err := d.httpClient.Get(context.Background(), urlStr)
+func (d *Downloader) fetchMasterPlaylist(ctx context.Context, urlStr string) (*m3u8.MasterPlaylist, error) {
+	resp, err := d.httpClient.Get(ctx, urlStr)
 	if err != nil {
 		return nil, err
 	}
@@ -194,8 +178,8 @@ func (d *Downloader) fetchMasterPlaylist(urlStr string) (*m3u8.MasterPlaylist, e
 	return playlist.(*m3u8.MasterPlaylist), nil
 }
 
-func (d *Downloader) downloadSegments(manifestURL, baseURL, outputDir string, isAudio bool) ([]string, error) {
-	resp, err := d.httpClient.Get(context.Background(), manifestURL)
+func (d *Downloader) downloadSegments(ctx context.Context, manifestURL, baseURL, outputDir string, isAudio bool) ([]string, error) {
+	resp, err := d.httpClient.Get(ctx, manifestURL)
 	if err != nil {
 		return nil, err
 	}
@@ -217,7 +201,6 @@ func (d *Downloader) downloadSegments(manifestURL, baseURL, outputDir string, is
 
 	mediaPlaylist := playlist.(*m3u8.MediaPlaylist)
 
-	// Count segments
 	segmentCount := 0
 	for _, seg := range mediaPlaylist.Segments {
 		if seg != nil {
@@ -230,12 +213,7 @@ func (d *Downloader) downloadSegments(manifestURL, baseURL, outputDir string, is
 		typeStr = "audio"
 	}
 
-	// Simple progress counter
 	var downloaded int32
-	// printProgress := func() {
-	// 	fmt.Printf("\r    Downloading %s: %d/%d", typeStr, atomic.LoadInt32(&downloaded), segmentCount)
-	// }
-
 	var localPaths []string
 	var mu sync.Mutex
 	var wg sync.WaitGroup
@@ -246,7 +224,7 @@ func (d *Downloader) downloadSegments(manifestURL, baseURL, outputDir string, is
 	if mediaPlaylist.Map != nil {
 		initURL := resolveSegmentURL(baseURL, mediaPlaylist.Map.URI)
 		initPath := filepath.Join(outputDir, fmt.Sprintf("%s_init.mp4", typeStr))
-		if err := d.downloadFile(initURL, initPath); err != nil {
+		if err := d.downloadFile(ctx, initURL, initPath); err != nil {
 			return nil, fmt.Errorf("failed to download init segment: %w", err)
 		}
 		localPaths = append(localPaths, initPath)
@@ -268,7 +246,7 @@ func (d *Downloader) downloadSegments(manifestURL, baseURL, outputDir string, is
 			segURL := resolveSegmentURL(baseURL, seg.URI)
 			localPath := filepath.Join(outputDir, fmt.Sprintf("%s_seg_%05d.ts", typeStr, idx))
 
-			if err := d.downloadFile(segURL, localPath); err != nil {
+			if err := d.downloadFile(ctx, segURL, localPath); err != nil {
 				select {
 				case errChan <- err:
 				default:
@@ -280,7 +258,6 @@ func (d *Downloader) downloadSegments(manifestURL, baseURL, outputDir string, is
 			localPaths = append(localPaths, localPath)
 			mu.Unlock()
 			atomic.AddInt32(&downloaded, 1)
-			// printProgress()
 		}(i, segment)
 	}
 
@@ -291,13 +268,11 @@ func (d *Downloader) downloadSegments(manifestURL, baseURL, outputDir string, is
 		return nil, err
 	}
 
-	// fmt.Println() // New line after progress
-
 	return localPaths, nil
 }
 
-func (d *Downloader) downloadFile(urlStr, path string) error {
-	resp, err := d.httpClient.Get(context.Background(), urlStr)
+func (d *Downloader) downloadFile(ctx context.Context, urlStr, path string) error {
+	resp, err := d.httpClient.Get(ctx, urlStr)
 	if err != nil {
 		return err
 	}
@@ -318,13 +293,6 @@ func (d *Downloader) downloadFile(urlStr, path string) error {
 }
 
 func extractBaseURLAndUID(manifestURL string) (baseURL, uid string, err error) {
-	// Match URLs like:
-	// https://videodelivery.net/abc123/manifest/video.m3u8
-	// https://customer-xxx.cloudflarestream.com/abc123/manifest/video.m3u8
-	// https://customer-xxx.cloudflarestream.com/<JWT>/manifest/video.m3u8
-	// The UID can be either a 32-char hex string or a JWT token (three dot-separated base64 strings)
-
-	// Parse the URL to extract components
 	re := regexp.MustCompile(`^(https?://[^/]+)/([^/]+)/manifest/video\.m3u8`)
 	matches := re.FindStringSubmatch(manifestURL)
 	if len(matches) == 3 {
@@ -334,29 +302,24 @@ func extractBaseURLAndUID(manifestURL string) (baseURL, uid string, err error) {
 }
 
 func buildManifestURL(baseURL, videoUID, relativeURI string) string {
-	// Handle relative URIs
 	relativeURI = strings.TrimPrefix(relativeURI, "../")
 	return fmt.Sprintf("%s/%s/manifest/%s", baseURL, videoUID, relativeURI)
 }
 
 func resolveSegmentURL(baseURL, segmentURI string) string {
-	// Clean up relative path
 	for strings.HasPrefix(segmentURI, "../") {
 		segmentURI = strings.TrimPrefix(segmentURI, "../")
 	}
 
-	// Check if it's already an absolute URL
 	if strings.HasPrefix(segmentURI, "http://") || strings.HasPrefix(segmentURI, "https://") {
 		return segmentURI
 	}
 
-	// Build absolute URL
 	parsedBase, err := url.Parse(baseURL)
 	if err != nil {
 		return baseURL + "/" + segmentURI
 	}
 
-	// Join with base path
 	return fmt.Sprintf("%s://%s/%s", parsedBase.Scheme, parsedBase.Host, segmentURI)
 }
 
@@ -365,7 +328,6 @@ func selectBestVariant(variants []*m3u8.Variant, preferredQuality string) *m3u8.
 		return nil
 	}
 
-	// If specific quality requested, try to match
 	if preferredQuality != "" {
 		for _, v := range variants {
 			if v != nil && v.Resolution == preferredQuality {
@@ -374,7 +336,6 @@ func selectBestVariant(variants []*m3u8.Variant, preferredQuality string) *m3u8.
 		}
 	}
 
-	// Default to highest bandwidth
 	var best *m3u8.Variant
 	for _, v := range variants {
 		if v == nil {
@@ -393,14 +354,12 @@ func concatenateSegments(segments []string, outputPath string) error {
 		return fmt.Errorf("no segments to concatenate")
 	}
 
-	// Create output file
 	output, err := os.Create(outputPath)
 	if err != nil {
 		return err
 	}
 	defer output.Close()
 
-	// Concatenate all segments
 	for _, segPath := range segments {
 		input, err := os.Open(segPath)
 		if err != nil {
@@ -411,7 +370,6 @@ func concatenateSegments(segments []string, outputPath string) error {
 		if err != nil {
 			return err
 		}
-		// Clean up segment file
 		os.Remove(segPath)
 	}
 
@@ -454,7 +412,6 @@ func copyFile(src, dst string) error {
 
 // ExtractVideoUID attempts to extract a Cloudflare video UID from various URL formats
 func ExtractVideoUID(urlStr string) (string, string, error) {
-	// Try common Cloudflare Stream URL patterns
 	patterns := []string{
 		`(customer-[^.]+\.cloudflarestream\.com)/([a-f0-9]{32})`,
 		`(videodelivery\.net)/([a-f0-9]{32})`,
@@ -471,7 +428,6 @@ func ExtractVideoUID(urlStr string) (string, string, error) {
 		}
 	}
 
-	// Check if the URL contains a 32-char hex string anywhere
 	hexRe := regexp.MustCompile(`[a-f0-9]{32}`)
 	if match := hexRe.FindString(urlStr); match != "" {
 		return "videodelivery.net", match, nil
@@ -490,7 +446,6 @@ func BuildManifestURLFromUID(domain, uid string) string {
 
 // SafeFilename creates a safe filename from a title
 func SafeFilename(title string) string {
-	// Replace problematic characters
 	replacer := strings.NewReplacer(
 		"/", "-",
 		"\\", "-",

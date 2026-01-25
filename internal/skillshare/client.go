@@ -1,6 +1,7 @@
 package skillshare
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -44,10 +45,10 @@ func ParseCourseURL(url string) (int, error) {
 }
 
 // FetchClassData retrieves class/course data from the Skillshare API
-func (c *Client) FetchClassData(classID int) (*ClassData, error) {
+func (c *Client) FetchClassData(ctx context.Context, classID int) (*ClassData, error) {
 	url := fmt.Sprintf("https://api.skillshare.com/classes/%d", classID)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -92,10 +93,10 @@ func (c *Client) FetchClassData(classID int) (*ClassData, error) {
 }
 
 // FetchClassResources retrieves downloadable resources/attachments for a class
-func (c *Client) FetchClassResources(classID int) (*ClassResources, error) {
+func (c *Client) FetchClassResources(ctx context.Context, classID int) (*ClassResources, error) {
 	url := fmt.Sprintf("https://api.skillshare.com/classes/%d/attachments", classID)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -132,10 +133,10 @@ func (c *Client) FetchClassResources(classID int) (*ClassResources, error) {
 }
 
 // FetchProjects retrieves student projects for a class
-func (c *Client) FetchProjects(classSlug string, classSKU int) (*ProjectsResponse, error) {
+func (c *Client) FetchProjects(ctx context.Context, classSlug string, classSKU int) (*ProjectsResponse, error) {
 	url := fmt.Sprintf("https://www.skillshare.com/en/classes/%s/%d/projects?format=json", classSlug, classSKU)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -180,7 +181,7 @@ func ExtractCloudflareUID(streamHref string) string {
 }
 
 // GetVideoStreamURL fetches the actual video stream URL from the session stream endpoint
-func (c *Client) GetVideoStreamURL(streamHref string) (string, error) {
+func (c *Client) GetVideoStreamURL(ctx context.Context, streamHref string) (string, error) {
 	if streamHref == "" {
 		return "", fmt.Errorf("no stream URL available")
 	}
@@ -190,7 +191,7 @@ func (c *Client) GetVideoStreamURL(streamHref string) (string, error) {
 		streamHref = "https://api.skillshare.com" + streamHref
 	}
 
-	req, err := http.NewRequest("GET", streamHref, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", streamHref, nil)
 	if err != nil {
 		return "", err
 	}
@@ -362,12 +363,12 @@ func parseRawCookies(content string) string {
 }
 
 // FetchProjectGuide retrieves the project guide (instructions + attachments) from the web endpoint
-func (c *Client) FetchProjectGuide(webURL string) (*ProjectGuideResponse, error) {
+func (c *Client) FetchProjectGuide(ctx context.Context, webURL string) (*ProjectGuideResponse, error) {
 	// Ensure URL is clean of query params
 	baseURL := strings.Split(webURL, "?")[0]
 	url := fmt.Sprintf("%s/projects?format=json", baseURL)
 
-	req, err := http.NewRequest("GET", url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
