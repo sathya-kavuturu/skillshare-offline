@@ -21,3 +21,6 @@ tmp/
 .vscode/
 .DS_Store
 *.log
+
+# Reference
+reference/
