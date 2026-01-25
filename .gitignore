@@ -1,0 +1,23 @@
+# Binaries
+skillshare-dl
+skillshare-dl.exe
+bin/
+dist/
+
+# User Data & Config
+cookies.txt
+*.cookie
+config.json
+
+# Downloads & Temp
+downloaded/
+test_download/
+*.segments_*/
+.segments/
+tmp/
+
+# IDE & System
+.idea/
+.vscode/
+.DS_Store
+*.log
