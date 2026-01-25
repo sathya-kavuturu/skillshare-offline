@@ -16,6 +16,14 @@ A modern, robust downloader for Skillshare courses that supports the new Cloudfl
 
 ## Installation
 
+### Instant Install (Go)
+
+If you have Go installed, you can install the tool directly:
+
+```bash
+go install github.com/xenking/skillshare-offline@latest
+```
+
 ### Pre-built Binaries
 
 Check the [Releases](https://github.com/xenking/skillshare-offline/releases) page for your operating system.
@@ -30,10 +38,14 @@ Check the [Releases](https://github.com/xenking/skillshare-offline/releases) pag
 ```bash
 git clone https://github.com/xenking/skillshare-offline.git
 cd skillshare-offline
+go build .
+# or use make
 make
 ```
 
-This will generate binaries in the `dist/` folder.
+### GitHub Actions
+
+This repository includes a GitHub Actions workflow that automatically builds and releases binaries for Windows, Linux, and macOS whenever a new tag (e.g., `v1.0.0`) is pushed.
 
 ## Usage
 

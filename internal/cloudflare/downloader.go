@@ -335,9 +335,7 @@ func extractBaseURLAndUID(manifestURL string) (baseURL, uid string, err error) {
 
 func buildManifestURL(baseURL, videoUID, relativeURI string) string {
 	// Handle relative URIs
-	if strings.HasPrefix(relativeURI, "../") {
-		relativeURI = strings.TrimPrefix(relativeURI, "../")
-	}
+	relativeURI = strings.TrimPrefix(relativeURI, "../")
 	return fmt.Sprintf("%s/%s/manifest/%s", baseURL, videoUID, relativeURI)
 }
 
