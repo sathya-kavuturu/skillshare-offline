@@ -56,7 +56,6 @@ func (c *Client) FetchClassData(ctx context.Context, classID int) (*ClassData, e
 	req.Header = http.Header{
 		"Accept":     {"application/vnd.skillshare.class+json;,version=0.8"},
 		"User-Agent": {"Skillshare/5.3.0; Android 9.0.1"},
-		"Host":       {"api.skillshare.com"},
 		"Referer":    {"https://www.skillshare.com/"},
 		"Cookie":     {c.cookies},
 	}
@@ -104,7 +103,6 @@ func (c *Client) FetchClassResources(ctx context.Context, classID int) (*ClassRe
 	req.Header = http.Header{
 		"Accept":     {"application/json"},
 		"User-Agent": {"Skillshare/5.3.0; Android 9.0.1"},
-		"Host":       {"api.skillshare.com"},
 		"Referer":    {"https://www.skillshare.com/"},
 		"Cookie":     {c.cookies},
 	}
@@ -199,7 +197,6 @@ func (c *Client) GetVideoStreamURL(ctx context.Context, streamHref string) (stri
 	req.Header = http.Header{
 		"Accept":     {"application/json"},
 		"User-Agent": {"Skillshare/5.3.0; Android 9.0.1"},
-		"Host":       {"api.skillshare.com"},
 		"Referer":    {"https://www.skillshare.com/"},
 		"Cookie":     {c.cookies},
 	}
@@ -211,7 +208,8 @@ func (c *Client) GetVideoStreamURL(ctx context.Context, streamHref string) (stri
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("failed to get stream URL: status %d", resp.StatusCode)
+		bodyBytes, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("failed to get stream URL: status %d, body: %s", resp.StatusCode, string(bodyBytes))
 	}
 
 	body, err := io.ReadAll(resp.Body)
@@ -276,13 +274,22 @@ func ParseCookiesFromFile(content string) string {
 
 	// Check if it looks like Netscape format (tab-separated)
 	lines := strings.Split(content, "\n")
-	if len(lines) > 0 {
-		firstLine := strings.TrimSpace(lines[0])
-
-		// If the first non-comment line has tabs, treat as Netscape format
-		if strings.Contains(firstLine, "\t") && !strings.HasPrefix(firstLine, "#") {
-			return parseNetscapeCookies(lines)
+	isNetscape := false
+	
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
 		}
+		// If the first non-comment line has tabs, treat as Netscape format
+		if strings.Contains(line, "\t") {
+			isNetscape = true
+		}
+		break
+	}
+
+	if isNetscape {
+		return parseNetscapeCookies(lines)
 	}
 
 	// Otherwise treat as raw cookie format
@@ -302,6 +309,10 @@ func parseNetscapeCookies(lines []string) string {
 		// Netscape cookie format: domain, flag, path, secure, expiration, name, value
 		fields := strings.Split(line, "\t")
 		if len(fields) >= 7 {
+			domain := fields[0]
+			if !strings.Contains(domain, "skillshare.com") {
+				continue
+			}
 			name := fields[5]
 			value := fields[6]
 			cookies = append(cookies, fmt.Sprintf("%s=%s", name, value))
@@ -359,7 +370,34 @@ func parseRawCookies(content string) string {
 		cookies = append(cookies, part)
 	}
 
-	return strings.Join(cookies, "; ")
+	// Filter known skillshare cookies if there are too many (indicates a full browser dump)
+	if len(cookies) > 50 {
+		var filtered []string
+		for _, c := range cookies {
+			lower := strings.ToLower(c)
+			if strings.HasPrefix(lower, "phpsessid=") ||
+				strings.HasPrefix(lower, "yii_csrf_token=") ||
+				strings.Contains(lower, "skillshare") {
+				filtered = append(filtered, c)
+			}
+		}
+		if len(filtered) > 0 {
+			cookies = filtered
+		}
+	}
+
+	// Limit total string length to ~6KB to prevent Cloudflare from dropping the connection
+	var finalCookies []string
+	var size int
+	for _, c := range cookies {
+		if size+len(c) > 6000 {
+			break
+		}
+		finalCookies = append(finalCookies, c)
+		size += len(c) + 2
+	}
+
+	return strings.Join(finalCookies, "; ")
 }
 
 // FetchProjectGuide retrieves the project guide (instructions + attachments) from the web endpoint

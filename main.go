@@ -26,6 +26,7 @@ type Config struct {
 	Verbose       bool
 	SkipVideos    bool
 	SkipResources bool
+	Concurrency   int
 }
 
 var verbose bool
@@ -43,6 +44,7 @@ func (c *Config) Flags() *flag.FlagSet {
 	fs.BoolVar(&c.Verbose, "v", false, "enable verbose output (shorthand)")
 	fs.BoolVar(&c.SkipVideos, "skip-videos", false, "Skip video downloads")
 	fs.BoolVar(&c.SkipResources, "skip-resources", false, "Skip resource/attachment downloads")
+	fs.IntVar(&c.Concurrency, "concurrency", 1, "Number of concurrent video downloads")
 	return fs
 }
 
@@ -125,9 +127,13 @@ func runDownload(ctx context.Context, cfg Config) error {
 	printInfo(fmt.Sprintf("Videos: %d | Duration: %s", classData.NumVideos, classData.TotalVideosDuration))
 
 	// Output directory
+	absOutputDir, err := filepath.Abs(cfg.OutputDir)
+	if err != nil {
+		absOutputDir = cfg.OutputDir
+	}
 	safeName := cloudflare.SafeFilename(classData.Title)
 	classDirName := fmt.Sprintf("[%d] %s", classID, safeName)
-	classDir := filepath.Join(cfg.OutputDir, classDirName)
+	classDir := filepath.Join(absOutputDir, classDirName)
 
 	if err := os.MkdirAll(classDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create course directory: %w", err)
@@ -169,26 +175,20 @@ func runDownload(ctx context.Context, cfg Config) error {
 	var successCount int32
 	var failCount int32
 	var wg sync.WaitGroup
-	sem := make(chan struct{}, 4)
+	sem := make(chan struct{}, cfg.Concurrency)
 
 	for i, lesson := range lessons {
 		select {
+		case sem <- struct{}{}: // Acquire semaphore BEFORE spawning to preserve order
 		case <-ctx.Done():
 			printInfo("Download cancelled by user")
 			goto CancelExit
-		default:
 		}
 
 		wg.Add(1)
 		go func(i int, lesson skillshare.Lesson) {
 			defer wg.Done()
-
-			select {
-			case sem <- struct{}{}: // Acquire
-			case <-ctx.Done():
-				return // Context cancelled
-			}
-			defer func() { <-sem }() // Release
+			defer func() { <-sem }() // Release when done
 
 			if ctx.Err() != nil {
 				return
@@ -222,15 +222,37 @@ func runDownload(ctx context.Context, cfg Config) error {
 				return
 			}
 
-			printInfo(fmt.Sprintf("Downloading [%d/%d]: %s", i+1, totalLessons, lesson.Title))
-			if err := downloader.DownloadVideo(ctx, videoURL, outputFile, cfg.Quality); err != nil {
-				if ctx.Err() == nil {
-					log.Printf("ERROR: [%d] Download failed: %v", i+1, err)
+			maxRetries := 2
+			var downloadErr error
+			
+			for attempt := 1; attempt <= maxRetries; attempt++ {
+				if attempt > 1 {
+					printInfo(fmt.Sprintf("Retrying [%d/%d]: %s (Attempt %d/%d)", i+1, totalLessons, lesson.Title, attempt, maxRetries))
+				} else {
+					printInfo(fmt.Sprintf("Downloading [%d/%d]: %s", i+1, totalLessons, lesson.Title))
 				}
+				
+				downloadErr = downloader.DownloadVideo(ctx, videoURL, outputFile, cfg.Quality)
+				if downloadErr == nil {
+					break // Success
+				}
+				
+				if ctx.Err() != nil {
+					break // Context cancelled, don't retry
+				}
+				
+				log.Printf("ERROR: [%d] Download failed on attempt %d: %v", i+1, attempt, downloadErr)
+				// Don't remove outputFile yet because segments are kept and will be reused on next retry!
+			}
+
+			if downloadErr != nil && ctx.Err() == nil {
 				atomic.AddInt32(&failCount, 1)
-				os.Remove(outputFile)
+				os.Remove(outputFile) // Only remove the final corrupted output file if it totally failed
+				return
+			} else if ctx.Err() != nil {
 				return
 			}
+
 
 			atomic.AddInt32(&successCount, 1)
 		}(i, lesson)

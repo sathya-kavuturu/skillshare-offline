@@ -76,7 +76,6 @@ func (d *Downloader) DownloadVideo(ctx context.Context, manifestURL, outputPath 
 	if err := os.MkdirAll(segmentDir, 0o755); err != nil {
 		return fmt.Errorf("failed to create output directory: %w", err)
 	}
-	defer os.RemoveAll(segmentDir)
 
 	// Download audio if available
 	var audioPath string
@@ -123,6 +122,9 @@ func (d *Downloader) DownloadVideo(ctx context.Context, manifestURL, outputPath 
 			}
 		}
 	}
+
+	// Clean up segments only on success
+	os.RemoveAll(segmentDir)
 
 	return nil
 }
@@ -230,6 +232,8 @@ func (d *Downloader) downloadSegments(ctx context.Context, manifestURL, baseURL,
 		localPaths = append(localPaths, initPath)
 	}
 
+	paths := make([]string, len(mediaPlaylist.Segments))
+	
 	// Download all segments
 	for i, segment := range mediaPlaylist.Segments {
 		if segment == nil {
@@ -255,23 +259,45 @@ func (d *Downloader) downloadSegments(ctx context.Context, manifestURL, baseURL,
 			}
 
 			mu.Lock()
-			localPaths = append(localPaths, localPath)
+			paths[idx] = localPath
 			mu.Unlock()
-			atomic.AddInt32(&downloaded, 1)
+			
+			downloadedCount := atomic.AddInt32(&downloaded, 1)
+			if downloadedCount%10 == 0 || int(downloadedCount) == segmentCount {
+				fmt.Printf("\r    [%s] Progress: %d/%d segments (%.1f%%)", typeStr, downloadedCount, segmentCount, float64(downloadedCount)/float64(segmentCount)*100)
+			}
 		}(i, segment)
 	}
 
 	wg.Wait()
+	fmt.Println() // Add a newline after progress bar completes
 	close(errChan)
 
 	if err := <-errChan; err != nil {
 		return nil, err
 	}
 
-	return localPaths, nil
+	// Assemble final ordered paths
+	var finalPaths []string
+	if mediaPlaylist.Map != nil {
+		initPath := filepath.Join(outputDir, fmt.Sprintf("%s_init.mp4", typeStr))
+		finalPaths = append(finalPaths, initPath)
+	}
+	for _, p := range paths {
+		if p != "" {
+			finalPaths = append(finalPaths, p)
+		}
+	}
+
+	return finalPaths, nil
 }
 
 func (d *Downloader) downloadFile(ctx context.Context, urlStr, path string) error {
+	// Check if the file already exists and has a non-zero size
+	if info, err := os.Stat(path); err == nil && info.Size() > 0 {
+		return nil
+	}
+
 	resp, err := d.httpClient.Get(ctx, urlStr)
 	if err != nil {
 		return err
@@ -284,11 +310,21 @@ func (d *Downloader) downloadFile(ctx context.Context, urlStr, path string) erro
 
 	out, err := os.Create(path)
 	if err != nil {
-		return err
+		// Retry creating directory and file
+		os.MkdirAll(filepath.Dir(path), 0755)
+		out, err = os.Create(path)
+		if err != nil {
+			return fmt.Errorf("failed to create file %s: %w", path, err)
+		}
 	}
-	defer out.Close()
-
+	
 	_, err = io.Copy(out, resp.Body)
+	out.Close()
+	
+	// If copy failed, remove the partial file so it can be retried properly next time
+	if err != nil {
+		os.Remove(path)
+	}
 	return err
 }
 
@@ -370,7 +406,6 @@ func concatenateSegments(segments []string, outputPath string) error {
 		if err != nil {
 			return err
 		}
-		os.Remove(segPath)
 	}
 
 	return nil
