@@ -20,6 +20,7 @@ import (
 
 type Config struct {
 	CourseURL     string
+	URLFile       string
 	CookieFile    string
 	OutputDir     string
 	Quality       string
@@ -35,6 +36,8 @@ func (c *Config) Flags() *flag.FlagSet {
 	fs := flag.NewFlagSet("download", flag.ContinueOnError)
 	fs.StringVar(&c.CourseURL, "url", "", "Skillshare course URL")
 	fs.StringVar(&c.CourseURL, "c", "", "Skillshare course URL (shorthand)")
+	fs.StringVar(&c.URLFile, "url-file", "", "Path to a text file containing Skillshare course URLs (one per line)")
+	fs.StringVar(&c.URLFile, "f", "", "Path to a text file containing Skillshare course URLs (shorthand)")
 	fs.StringVar(&c.CookieFile, "cookie-file", "cookies.txt", "Path to cookies.txt file")
 	fs.StringVar(&c.OutputDir, "output-dir", "./downloaded", "Output directory")
 	fs.StringVar(&c.OutputDir, "o", "./downloaded", "Output directory (shorthand)")
@@ -63,12 +66,50 @@ func main() {
 					return err
 				}
 
-				if cfg.CourseURL == "" {
-					return fmt.Errorf("course URL is required (use --url)")
+				if cfg.CourseURL == "" && cfg.URLFile == "" {
+					return fmt.Errorf("course URL (--url) or URL file (--url-file) is required")
+				}
+
+				var urls []string
+				if cfg.CourseURL != "" {
+					urls = append(urls, cfg.CourseURL)
+				}
+
+				if cfg.URLFile != "" {
+					data, err := os.ReadFile(cfg.URLFile)
+					if err != nil {
+						return fmt.Errorf("failed to read URL file: %w", err)
+					}
+					for _, line := range strings.Split(string(data), "\n") {
+						line = strings.TrimSpace(line)
+						if line != "" {
+							urls = append(urls, line)
+						}
+					}
+				}
+
+				if len(urls) == 0 {
+					return fmt.Errorf("no URLs found")
 				}
 
 				verbose = cfg.Verbose
-				return runDownload(ctx, cfg)
+
+				var lastErr error
+				for i, u := range urls {
+					if ctx.Err() != nil {
+						return ctx.Err()
+					}
+					if i > 0 {
+						printInfo("─────────────────────────────────────────")
+					}
+					cfg.CourseURL = u
+					if err := runDownload(ctx, cfg); err != nil {
+						log.Printf("Error downloading %s: %v", u, err)
+						lastErr = err
+					}
+				}
+
+				return lastErr
 			},
 		},
 	}
